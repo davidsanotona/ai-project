@@ -1,0 +1,1 @@
+This project is to make AI insight assistant from placeholder data
