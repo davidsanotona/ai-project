@@ -1,0 +1,55 @@
+# docker-compose.yml
+# -------------------
+# Defines the service configuration for local development and single-host deployment.
+#
+# In a production multi-agent setup, each agent would be its own service here,
+# communicating over the internal Docker network via MCP server URLs.
+# This single-service version keeps the demo self-contained.
+
+services:
+  vc-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # target: runtime   # uncomment to explicitly target the runtime stage
+    image: vc-esg-agent:latest
+    container_name: vc-esg-agent
+
+    # Mount the output directory so memos are written to the host filesystem,
+    # not lost when the container exits
+    volumes:
+      - ./output:/app/output
+
+    # Load API keys from .env file — never hardcode secrets in compose files
+    # Copy .env.example to .env and fill in your keys
+    env_file:
+      - .env
+
+    # Override CMD to run a specific company analysis
+    # Usage: docker compose run vc-agent --company "Northvolt" --thesis "Battery storage"
+    # Left empty here so the default CMD ["--help"] runs if no args provided
+    # command: ["--company", "Northvolt", "--thesis", "Climate battery storage"]
+
+    # Resource limits — LLM API calls are I/O bound, not CPU bound,
+    # so we cap CPU to avoid hogging the host on long pipelines
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  # --- Future: distributed agent services ---
+  # In a true MCP deployment, uncomment and extend this pattern:
+  #
+  # company-intel-service:
+  #   build: ./agents/company_intel_service
+  #   ports: ["8001:8000"]
+  #   env_file: .env
+  #
+  # esg-service:
+  #   build: ./agents/esg_service
+  #   ports: ["8002:8000"]
+  #   env_file: .env
+  #
+  # orchestrator would then call these via HTTP MCP endpoints
+  # instead of direct Python function calls

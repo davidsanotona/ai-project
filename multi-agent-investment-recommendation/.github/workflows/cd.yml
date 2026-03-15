@@ -1,0 +1,145 @@
+# .github/workflows/cd.yml
+# -------------------------
+# Continuous Deployment pipeline.
+# Triggers only when a PR is merged to main (not on every push).
+#
+# What it does:
+#   1. Builds the Docker image
+#   2. Pushes it to Docker Hub with versioned tags
+#   3. Deploys to the target environment (configured via secrets)
+#
+# Deployment target is kept generic here — see the "deploy" job comments
+# for how to adapt it to Railway, Fly.io, ECS, or a plain VPS.
+# For a small early-stage company, Railway or Fly.io are the fastest path.
+
+name: CD
+
+on:
+  push:
+    branches: [main]   # only runs on merge to main, not on PRs
+
+# Prevent concurrent deployments — if a deploy is running and another
+# merge lands, the second run waits rather than deploying in parallel
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Build and push Docker image to Docker Hub
+  # Tags with both the git SHA (immutable, for rollback) and "latest"
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build and Push
+    runs-on: ubuntu-latest
+
+    # Expose the image tag as an output so the deploy job can reference it
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          # DOCKER_USERNAME and DOCKER_PASSWORD are set in GitHub repo secrets
+          # Settings > Secrets and variables > Actions > New repository secret
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/vc-esg-agent
+          tags: |
+            # Tag with the short git SHA for traceability — e.g. sha-a1b2c3d
+            type=sha,prefix=sha-,format=short
+            # Tag as "latest" for convenience
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Deploy
+  # Pulls the newly pushed image and restarts the service.
+  #
+  # Three options shown below — uncomment the one that matches your infra.
+  # For a small/new company, Option A (Railway) is the fastest to set up.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build-and-push   # only deploys if image was pushed successfully
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Option A: Railway (recommended for early-stage)
+      # Fastest setup — connect repo in Railway dashboard, add RAILWAY_TOKEN secret.
+      # Railway auto-detects the Dockerfile and handles the rest.
+      # -----------------------------------------------------------------------
+      # - name: Deploy to Railway
+      #   uses: bervProject/railway-deploy@v1
+      #   with:
+      #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
+      #     service: vc-esg-agent
+
+      # -----------------------------------------------------------------------
+      # Option B: Fly.io
+      # Good for more control than Railway, still simple.
+      # Requires a fly.toml in the repo root (flyctl launch generates it).
+      # -----------------------------------------------------------------------
+      # - name: Deploy to Fly.io
+      #   uses: superfly/flyctl-actions/setup-flyctl@master
+      # - run: flyctl deploy --remote-only
+      #   env:
+      #     FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Option C: Plain VPS via SSH (most control, most setup)
+      # SSH into the server, pull the new image, restart the container.
+      # VPS_HOST, VPS_USER, VPS_SSH_KEY are set in GitHub secrets.
+      # -----------------------------------------------------------------------
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            # Pull the latest image from Docker Hub
+            docker pull ${{ secrets.DOCKER_USERNAME }}/vc-esg-agent:latest
+
+            # Stop and remove the old container if running
+            docker stop vc-esg-agent || true
+            docker rm vc-esg-agent || true
+
+            # Start the new container
+            # --env-file points to a .env file on the server (not in the repo)
+            # -v mounts the output directory on the host for memo persistence
+            docker run -d \
+              --name vc-esg-agent \
+              --restart unless-stopped \
+              --env-file /opt/vc-esg-agent/.env \
+              -v /opt/vc-esg-agent/output:/app/output \
+              ${{ secrets.DOCKER_USERNAME }}/vc-esg-agent:latest
+
+            # Verify the container started cleanly
+            docker ps | grep vc-esg-agent

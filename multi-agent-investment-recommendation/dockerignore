@@ -1,0 +1,20 @@
+# .dockerignore
+# Excludes files from the Docker build context.
+# Keeps the image lean and prevents secrets from leaking into layers.
+
+# Secrets — never copy into image
+.env
+
+# Output files — mounted as a volume at runtime instead
+output/
+
+# Python cache — rebuilt inside container
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Development artifacts
+.git/
+.gitignore
+*.md

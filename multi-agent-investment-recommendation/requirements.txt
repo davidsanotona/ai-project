@@ -1,0 +1,4 @@
+anthropic>=0.25.0
+yfinance>=0.2.40
+pytest>=8.0.0
+flake8>=7.0.0
