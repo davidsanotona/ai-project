@@ -33,6 +33,7 @@ vc-esg-agent/
 ├── docker-compose.yml           # Local dev and single-host deployment
 ├── .env.example                 # API key template — copy to .env and fill in
 ├── requirements.txt
+└── orchestrator.py              # brain
 └── main.py                      # CLI entry point
 ```
 
